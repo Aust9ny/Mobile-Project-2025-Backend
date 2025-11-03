@@ -1,15 +1,23 @@
-import admin from 'firebase-admin';
 import jwt from 'jsonwebtoken';
 import pool from '../config/db.js';
 
+import admin from '../config/firebaseAdmin.js';
+
 // Initialize Firebase Admin (add your service account key to .env)
-// admin.initializeApp({
-//   credential: admin.credential.cert({
-//     projectId: process.env.FIREBASE_PROJECT_ID,
-//     clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-//     privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-//   }),
-// });
+try {
+  if (!admin.apps?.length) {
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+      }),
+    });
+    console.log('✅ Firebase Admin initialized');
+  }
+} catch (e) {
+  console.error('❌ Firebase Admin initialization failed:', e?.message || e);
+}
 
 export const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
