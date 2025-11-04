@@ -1,357 +1,169 @@
+// routes/borrows.js
 import express from "express";
-import pool from '../config/db.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { MOCK_LIBRARY } from "../data/mockBooks.js";
 
 const router = express.Router();
 
-// GET all borrows with optional filters (protected)
-router.get("/", authenticateToken, async (req, res) => {
-  try {
-    const { user_id, book_id, status, limit = 50, offset = 0 } = req.query;
-    
-    let query = `
-      SELECT 
-        borrows.*,
-        users.name as user_name,
-        users.email as user_email,
-        books.title as book_title,
-        books.author as book_author,
-        books.cover_image as book_cover
-      FROM borrows
-      JOIN users ON borrows.user_id = users.id
-      JOIN books ON borrows.book_id = books.id
-      WHERE 1=1
-    `;
-    const params = [];
-    
-    if (user_id) {
-      query += ' AND borrows.user_id = ?';
-      params.push(user_id);
-    }
-    
-    if (book_id) {
-      query += ' AND borrows.book_id = ?';
-      params.push(book_id);
-    }
-    
-    if (status) {
-      query += ' AND borrows.status = ?';
-      params.push(status);
-    }
-    
-    query += ' ORDER BY borrows.created_at DESC LIMIT ? OFFSET ?';
-    params.push(parseInt(limit), parseInt(offset));
-    
-    const [borrows] = await pool.query(query, params);
-    
-    res.json({ borrows });
-  } catch (error) {
-    console.error('Get borrows error:', error);
-    res.status(500).json({ error: 'Failed to get borrows' });
-  }
-});
+// ตัวแปรเก็บข้อมูลการยืม
+const borrowHistories = {}; // { bookId: [{ userId, borrowDate, dueDate, extended }] }
 
-// GET borrow by ID (protected)
-router.get("/:id", authenticateToken, async (req, res) => {
-  try {
-    const [borrows] = await pool.query(
-      `SELECT 
-        borrows.*,
-        users.name as user_name,
-        users.email as user_email,
-        books.title as book_title,
-        books.author as book_author,
-        books.isbn as book_isbn,
-        books.cover_image as book_cover
-      FROM borrows
-      JOIN users ON borrows.user_id = users.id
-      JOIN books ON borrows.book_id = books.id
-      WHERE borrows.id = ?`,
-      [req.params.id]
-    );
-    
-    if (borrows.length === 0) {
-      return res.status(404).json({ error: 'Borrow record not found' });
-    }
-    
-    res.json({ borrow: borrows[0] });
-  } catch (error) {
-    console.error('Get borrow error:', error);
-    res.status(500).json({ error: 'Failed to get borrow' });
-  }
-});
+// ฟังก์ชัน log ประวัติยืมแบบสวย
+const logBorrowHistory = (bookId) => {
+  const book = MOCK_LIBRARY.find(b => b.id === bookId);
+  const history = borrowHistories[bookId] || [];
 
-// GET user's borrow history (protected)
-router.get("/user/:user_id", authenticateToken, async (req, res) => {
-  try {
-    const [borrows] = await pool.query(
-      `SELECT 
-        borrows.*,
-        books.title as book_title,
-        books.author as book_author,
-        books.cover_image as book_cover
-      FROM borrows
-      JOIN books ON borrows.book_id = books.id
-      WHERE borrows.user_id = ?
-      ORDER BY borrows.created_at DESC`,
-      [req.params.user_id]
-    );
-    
-    res.json({ borrows });
-  } catch (error) {
-    console.error('Get user borrows error:', error);
-    res.status(500).json({ error: 'Failed to get user borrows' });
-  }
-});
+  console.log(`\n==================== BORROW HISTORY ====================`);
+  console.log(`📖 หนังสือ: "${book?.title}" (ID: ${bookId})`);
+  if (history.length === 0) {
+    console.log("   ➤ ไม่มีผู้ใช้อยู่ในระบบยืมตอนนี้");
+  } else {
+    history.forEach(h => {
+      const now = new Date();
+      const borrowDate = new Date(h.borrowDate);
+      const dueDate = new Date(h.dueDate);
+      const daysLeft = Math.ceil((dueDate.getTime() - now.getTime()) / (1000*60*60*24));
+      const status = h.extended ? "✅ ยืมต่อแล้ว" : "⏳ ยังไม่ยืมต่อ";
+      const overdue = daysLeft < 0 ? `⚠️ เกิน ${Math.abs(daysLeft)} วัน` : `${daysLeft} วันเหลือ`;
 
-// GET active borrows for a user (protected)
-router.get("/user/:user_id/active", authenticateToken, async (req, res) => {
-  try {
-    const [borrows] = await pool.query(
-      `SELECT 
-        borrows.*,
-        books.title as book_title,
-        books.author as book_author,
-        books.cover_image as book_cover
-      FROM borrows
-      JOIN books ON borrows.book_id = books.id
-      WHERE borrows.user_id = ? AND borrows.status = 'borrowed'
-      ORDER BY borrows.due_date ASC`,
-      [req.params.user_id]
-    );
-    
-    res.json({ borrows });
-  } catch (error) {
-    console.error('Get active borrows error:', error);
-    res.status(500).json({ error: 'Failed to get active borrows' });
-  }
-});
-
-// GET overdue borrows (protected)
-router.get("/status/overdue", authenticateToken, async (req, res) => {
-  try {
-    const [borrows] = await pool.query(
-      `SELECT 
-        borrows.*,
-        users.name as user_name,
-        users.email as user_email,
-        books.title as book_title,
-        books.author as book_author
-      FROM borrows
-      JOIN users ON borrows.user_id = users.id
-      JOIN books ON borrows.book_id = books.id
-      WHERE borrows.status = 'borrowed' AND borrows.due_date < NOW()
-      ORDER BY borrows.due_date ASC`
-    );
-    
-    res.json({ borrows });
-  } catch (error) {
-    console.error('Get overdue borrows error:', error);
-    res.status(500).json({ error: 'Failed to get overdue borrows' });
-  }
-});
-
-// POST create borrow (protected)
-router.post("/", authenticateToken, async (req, res) => {
-  const connection = await pool.getConnection();
-  
-  try {
-    await connection.beginTransaction();
-    
-    let { user_id, book_id, due_date } = req.body;
-    
-    // Derive user_id from authenticated user if not provided
-    if (!user_id) {
-      if (req.user?.authType === 'firebase') {
-        const [users] = await connection.query(
-          'SELECT id FROM users WHERE firebase_uid = ?',
-          [req.user.uid]
-        );
-        user_id = users[0]?.id;
-      } else if (req.user?.id) {
-        user_id = req.user.id;
-      }
-    }
-    
-    if (!user_id || !book_id) {
-      await connection.rollback();
-      return res.status(400).json({ error: 'User ID and Book ID are required' });
-    }
-    
-    // Check if book is available
-    const [books] = await connection.query(
-      'SELECT available_copies FROM books WHERE id = ?',
-      [book_id]
-    );
-    
-    if (books.length === 0) {
-      await connection.rollback();
-      return res.status(404).json({ error: 'Book not found' });
-    }
-    
-    if (books[0].available_copies <= 0) {
-      await connection.rollback();
-      return res.status(400).json({ error: 'Book is not available' });
-    }
-    
-    // Check if user already has this book borrowed
-    const [existingBorrow] = await connection.query(
-      'SELECT id FROM borrows WHERE user_id = ? AND book_id = ? AND status = "borrowed"',
-      [user_id, book_id]
-    );
-    
-    if (existingBorrow.length > 0) {
-      await connection.rollback();
-      return res.status(400).json({ error: 'User already borrowed this book' });
-    }
-    
-    // Create borrow record
-    const borrowDate = new Date();
-    const dueDate = due_date ? new Date(due_date) : new Date(borrowDate.getTime() + 14 * 24 * 60 * 60 * 1000); // 14 days default
-    
-    const [result] = await connection.query(
-      'INSERT INTO borrows (user_id, book_id, borrow_date, due_date, status) VALUES (?, ?, ?, ?, "borrowed")',
-      [user_id, book_id, borrowDate, dueDate]
-    );
-    
-    // Decrease available copies
-    await connection.query(
-      'UPDATE books SET available_copies = available_copies - 1 WHERE id = ?',
-      [book_id]
-    );
-    
-    await connection.commit();
-    
-    res.status(201).json({ 
-      message: 'Book borrowed successfully',
-      borrow: {
-        id: result.insertId,
-        user_id,
-        book_id,
-        borrow_date: borrowDate,
-        due_date: dueDate,
-        status: 'borrowed'
-      }
+      console.log(`---------------------------------------------------------`);
+      console.log(`   User       : ${h.userId}`);
+      console.log(`   ยืม        : ${borrowDate.toLocaleString()}`);
+      console.log(`   คืน        : ${dueDate.toLocaleString()}`);
+      console.log(`   สถานะ     : ${status}`);
+      console.log(`   เวลาที่เหลือ: ${overdue}`);
     });
-  } catch (error) {
-    await connection.rollback();
-    console.error('Create borrow error:', error);
-    res.status(500).json({ error: 'Failed to create borrow' });
-  } finally {
-    connection.release();
   }
-});
+  console.log(`=========================================================\n`);
+};
 
-// PUT return book (protected)
-router.put("/:id/return", authenticateToken, async (req, res) => {
-  const connection = await pool.getConnection();
-  
-  try {
-    await connection.beginTransaction();
-    
-    // Get borrow record
-    const [borrows] = await connection.query(
-      'SELECT * FROM borrows WHERE id = ?',
-      [req.params.id]
-    );
-    
-    if (borrows.length === 0) {
-      await connection.rollback();
-      return res.status(404).json({ error: 'Borrow record not found' });
+// ---------------------- ยืมหนังสือ ----------------------
+router.post("/mock/:id/borrow", (req, res) => {
+  const { id } = req.params;
+  const { userId, action } = req.body;
+
+  if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+  const book = MOCK_LIBRARY.find((b) => b.id === id);
+  if (!book) return res.status(404).json({ error: "Book not found" });
+
+  if (!borrowHistories[book.id]) borrowHistories[book.id] = [];
+
+  const userHistory = borrowHistories[book.id].find((b) => b.userId === userId);
+
+  if (action === "borrow") {
+    if (userHistory) {
+      console.log(`\n❌ [BORROW FAILED] User "${userId}" already borrowed "${book.title}"`);
+      logBorrowHistory(book.id);
+      return res.status(400).json({ error: "คุณยืมหนังสือเล่มนี้อยู่แล้ว" });
     }
-    
-    const borrow = borrows[0];
-    
-    if (borrow.status === 'returned') {
-      await connection.rollback();
-      return res.status(400).json({ error: 'Book already returned' });
+
+    const borrowed = borrowHistories[book.id].length;
+    if (borrowed >= book.total) {
+      console.log(`\n❌ [BORROW FAILED] Book "${book.title}" is out of stock`);
+      logBorrowHistory(book.id);
+      return res.status(400).json({ error: "หนังสือหมด" });
     }
-    
-    // Update borrow record
-    const returnDate = new Date();
-    await connection.query(
-      'UPDATE borrows SET status = "returned", return_date = ? WHERE id = ?',
-      [returnDate, req.params.id]
-    );
-    
-    // Increase available copies
-    await connection.query(
-      'UPDATE books SET available_copies = available_copies + 1 WHERE id = ?',
-      [borrow.book_id]
-    );
-    
-    await connection.commit();
-    
-    res.json({ 
-      message: 'Book returned successfully',
-      borrow: {
-        ...borrow,
-        status: 'returned',
-        return_date: returnDate
-      }
+
+    const now = new Date();
+    const dueDate = new Date(now.getTime() + 7*24*60*60*1000);
+
+    borrowHistories[book.id].push({
+      userId,
+      borrowDate: now.toISOString(),
+      dueDate: dueDate.toISOString(),
+      extended: false
     });
-  } catch (error) {
-    await connection.rollback();
-    console.error('Return book error:', error);
-    res.status(500).json({ error: 'Failed to return book' });
-  } finally {
-    connection.release();
+
+    console.log(`\n✅ [BORROW SUCCESS] "${book.title}" borrowed by ${userId}`);
+    logBorrowHistory(book.id);
+
+    return res.json({ success: true, book: { ...book, borrowed: borrowHistories[book.id].length, available: book.total - borrowHistories[book.id].length, total: book.total } });
   }
+
+  return res.status(400).json({ error: "Invalid action" });
 });
 
-// PUT extend due date (protected)
-router.put("/:id/extend", authenticateToken, async (req, res) => {
-  try {
-    const { new_due_date } = req.body;
-    
-    if (!new_due_date) {
-      return res.status(400).json({ error: 'New due date is required' });
-    }
-    
-    const [borrows] = await pool.query(
-      'SELECT * FROM borrows WHERE id = ?',
-      [req.params.id]
-    );
-    
-    if (borrows.length === 0) {
-      return res.status(404).json({ error: 'Borrow record not found' });
-    }
-    
-    if (borrows[0].status !== 'borrowed') {
-      return res.status(400).json({ error: 'Can only extend active borrows' });
-    }
-    
-    await pool.query(
-      'UPDATE borrows SET due_date = ? WHERE id = ?',
-      [new_due_date, req.params.id]
-    );
-    
-    const [updated] = await pool.query('SELECT * FROM borrows WHERE id = ?', [req.params.id]);
-    
-    res.json({ 
-      message: 'Due date extended successfully',
-      borrow: updated[0]
-    });
-  } catch (error) {
-    console.error('Extend due date error:', error);
-    res.status(500).json({ error: 'Failed to extend due date' });
+// ---------------------- คืนหนังสือ ----------------------
+router.post("/mock/:id/return", (req, res) => {
+  const { id } = req.params;
+  const { userId, borrowDate, dueDate } = req.body;
+
+  if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+  const book = MOCK_LIBRARY.find((b) => b.id === id);
+  if (!book) return res.status(404).json({ error: "Book not found" });
+
+  if (!borrowHistories[book.id]) borrowHistories[book.id] = [];
+
+  let userHistory = borrowHistories[book.id].find((b) => b.userId === userId);
+  if (!userHistory && borrowDate && dueDate) {
+    userHistory = { userId, borrowDate, dueDate, extended: false };
+    borrowHistories[book.id].push(userHistory);
   }
+
+  if (!userHistory) {
+    console.log(`\n❌ [RETURN FAILED] User "${userId}" never borrowed "${book.title}"`);
+    logBorrowHistory(book.id);
+    return res.status(400).json({ error: "คุณไม่ได้ยืมหนังสือเล่มนี้" });
+  }
+
+  borrowHistories[book.id] = borrowHistories[book.id].filter(b => b.userId !== userId);
+
+  console.log(`\n↩️ [RETURN SUCCESS] "${book.title}" returned by ${userId}`);
+  logBorrowHistory(book.id);
+
+  return res.json({ success: true, book: { ...book, borrowed: borrowHistories[book.id].length, available: book.total - borrowHistories[book.id].length, total: book.total } });
 });
 
-// DELETE borrow (protected - admin only, use with caution)
-router.delete("/:id", authenticateToken, async (req, res) => {
-  try {
-    const [result] = await pool.query('DELETE FROM borrows WHERE id = ?', [req.params.id]);
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Borrow record not found' });
-    }
-    
-    res.json({ message: 'Borrow record deleted successfully' });
-  } catch (error) {
-    console.error('Delete borrow error:', error);
-    res.status(500).json({ error: 'Failed to delete borrow' });
+// ---------------------- ยืมต่อ ----------------------
+router.post("/mock/:id/extend", (req, res) => {
+  const { id } = req.params;
+  const { userId } = req.body;
+
+  if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+  const book = MOCK_LIBRARY.find((b) => b.id === id);
+  if (!book) return res.status(404).json({ error: "Book not found" });
+
+  if (!borrowHistories[book.id]) borrowHistories[book.id] = [];
+
+  const userHistory = borrowHistories[book.id].find((b) => b.userId === userId);
+  if (!userHistory) {
+    console.log(`\n❌ [EXTEND FAILED] User "${userId}" never borrowed "${book.title}"`);
+    logBorrowHistory(book.id);
+    return res.status(400).json({ error: "คุณไม่ได้ยืมหนังสือเล่มนี้" });
   }
+
+  if (userHistory.extended) {
+    console.log(`\n❌ [EXTEND FAILED] User "${userId}" already extended "${book.title}"`);
+    logBorrowHistory(book.id);
+    return res.status(400).json({ error: "คุณยืมต่อหนังสือเล่มนี้ไปแล้ว" });
+  }
+
+  const now = new Date();
+  const dueDate = new Date(userHistory.dueDate);
+  const daysLeft = Math.ceil((dueDate.getTime() - now.getTime()) / (1000*60*60*24));
+
+  if (daysLeft > 3) {
+    console.log(`\n❌ [EXTEND FAILED] "${book.title}" cannot extend yet`);
+    logBorrowHistory(book.id);
+    return res.status(400).json({ error: "ยืมต่อได้เมื่อเหลือเวลาไม่เกิน 3 วัน" });
+  }
+
+  if (daysLeft < 0) {
+    console.log(`\n❌ [EXTEND FAILED] "${book.title}" overdue, cannot extend`);
+    logBorrowHistory(book.id);
+    return res.status(400).json({ error: "หนังสือเกินกำหนดคืนแล้ว กรุณาคืนก่อน" });
+  }
+
+  const newDueDate = new Date(dueDate.getTime() + 7*24*60*60*1000);
+  userHistory.dueDate = newDueDate.toISOString();
+  userHistory.extended = true;
+
+  console.log(`\n🔄 [EXTEND SUCCESS] "${book.title}" extended by ${userId}`);
+  logBorrowHistory(book.id);
+
+  return res.json({ success: true, book: { ...book, borrowed: borrowHistories[book.id].length, available: book.total - borrowHistories[book.id].length, total: book.total } });
 });
 
 export default router;
