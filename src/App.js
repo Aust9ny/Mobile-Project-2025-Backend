@@ -66,4 +66,15 @@ app.delete("/api/test-delete-users/:id", async (req, res) => {
   }
 });
 
+app.get("/api/test-books", async (req, res) => {
+  try {
+    const [rows] = await pool.query("SELECT * FROM books");
+    res.json({ success: true, books: rows });
+  } catch (err) {
+    console.error("DB Query failed:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
 export default app;
