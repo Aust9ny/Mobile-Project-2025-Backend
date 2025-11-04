@@ -1,7 +1,6 @@
 import jwt from 'jsonwebtoken';
 import pool from '../config/db.js';
 
-import admin from '../config/firebaseAdmin.js';
 
 // Initialize Firebase Admin (add your service account key to .env)
 try {

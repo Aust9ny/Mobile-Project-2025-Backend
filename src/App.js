@@ -4,7 +4,7 @@ import dotenv from "dotenv";
 import usersRoutes from "./routes/users.js";
 import booksRoutes from "./routes/books.js";
 import borrowsRoutes from "./routes/borrows.js";
-import authRoutes from "./routes/auth.js";
+
 
 dotenv.config();
 const app = express();
@@ -13,7 +13,7 @@ app.use(cors());
 app.use(express.json());
 
 // Routes
-app.use("/api/auth", authRoutes);
+
 app.use("/api/users", usersRoutes);
 app.use("/api/books", booksRoutes);
 app.use("/api/borrows", borrowsRoutes);
