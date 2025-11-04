@@ -4,7 +4,7 @@ import dotenv from "dotenv";
 import usersRoutes from "./routes/users.js";
 import booksRoutes from "./routes/books.js";
 import borrowsRoutes from "./routes/borrows.js";
-
+import pool from "./config/db.js";
 
 dotenv.config();
 const app = express();
@@ -13,28 +13,32 @@ app.use(cors());
 app.use(express.json());
 
 // Routes
-
 app.use("/api/users", usersRoutes);
 app.use("/api/books", booksRoutes);
 app.use("/api/borrows", borrowsRoutes);
 
+// Root
 app.get("/", (req, res) => {
   res.send("📚 Library API is running...");
 });
 
-import pool from "./config/db.js";
-
+// ------------------------
+// Test Database Connection
+// ------------------------
 app.get("/api/test-db", async (req, res) => {
   try {
     const [rows] = await pool.query("SELECT DATABASE() AS now");
     res.json({ success: true, time: rows[0].now });
-    console.log("DB Connection now is :", rows[0].now);
+    console.log("DB Connection now is:", rows[0].now);
   } catch (err) {
     console.error("DB Connection failed:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
+// ------------------------
+// Test Users Table
+// ------------------------
 app.get("/api/test-users", async (req, res) => {
   try {
     const [rows] = await pool.query("SELECT * FROM users");
@@ -66,6 +70,9 @@ app.delete("/api/test-delete-users/:id", async (req, res) => {
   }
 });
 
+// ------------------------
+// Test Books Table
+// ------------------------
 app.get("/api/test-books", async (req, res) => {
   try {
     const [rows] = await pool.query("SELECT * FROM books");
@@ -76,5 +83,27 @@ app.get("/api/test-books", async (req, res) => {
   }
 });
 
+// ------------------------
+// Search Books API
+// ------------------------
+app.get("/api/books/search", async (req, res) => {
+  const query = req.query.q?.trim() || "";
+  try {
+    let sql = "SELECT * FROM books";
+    let params = [];
+
+    if (query) {
+      sql += " WHERE title LIKE ? OR author LIKE ?";
+      const likeQuery = `%${query}%`;
+      params = [likeQuery, likeQuery];
+    }
+
+    const [rows] = await pool.query(sql, params);
+    res.json({ books: rows });
+  } catch (err) {
+    console.error("Search DB failed:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 export default app;
