@@ -424,4 +424,93 @@ router.post('/refresh', async (req, res) => {
   }
 });
 
+// POST favorite
+router.post('/:userId/favorite', async (req, res) => {
+  try {
+    const { bookId, action } = req.body;
+    const { userId } = req.params;
+
+    console.log(`[FAVORITE] userId=${userId}, bookId=${bookId}, action=${action}`);
+
+    if (!bookId || !action) {
+      console.log('[FAVORITE] Missing bookId or action');
+      return res.status(400).json({ error: 'bookId and action required' });
+    }
+
+    const [users] = await pool.query('SELECT id FROM users WHERE id = ?', [userId]);
+    if (users.length === 0) {
+      console.log(`[FAVORITE] User not found: userId=${userId}`);
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const [books] = await pool.query('SELECT id FROM books WHERE id = ?', [bookId]);
+    if (books.length === 0) {
+      console.log(`[FAVORITE] Book not found: bookId=${bookId}`);
+      return res.status(404).json({ error: 'Book not found' });
+    }
+
+    if (action === 'add') {
+      const [result] = await pool.query(
+        'INSERT IGNORE INTO user_favorites (user_id, book_id) VALUES (?, ?)',
+        [userId, bookId]
+      );
+      console.log(`[FAVORITE] Added favorite - affectedRows: ${result.affectedRows}`);
+    } else if (action === 'remove') {
+      const [result] = await pool.query(
+        'DELETE FROM user_favorites WHERE user_id = ? AND book_id = ?',
+        [userId, bookId]
+      );
+      console.log(`[FAVORITE] Removed favorite - affectedRows: ${result.affectedRows}`);
+    } else {
+      console.log(`[FAVORITE] Invalid action: ${action}`);
+      return res.status(400).json({ error: 'Invalid action' });
+    }
+
+    console.log('[FAVORITE] Success');
+    res.json({ message: 'Favorite updated successfully' });
+  } catch (err) {
+    console.error('[FAVORITE ERROR]', err);
+    res.status(500).json({ error: 'Failed to update favorite' });
+  }
+});
+
+// GET /api/users/:userId/favorites - ดึงรายการโปรดโดยไม่ต้องใช้ cover
+router.get('/:userId/favorites', async (req, res) => {
+  const { userId } = req.params;
+  console.log(`[GET FAVORITES] userId=${userId}`);
+
+  try {
+    const [users] = await pool.query('SELECT id FROM users WHERE id = ?', [userId]);
+    if (users.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // ดึง favorites โดยไม่เอา cover
+    const [favorites] = await pool.query(
+      `SELECT 
+         b.id, 
+         b.title, 
+         b.author, 
+         b.genre,
+         b.summary
+       FROM books b
+       JOIN user_favorites uf ON b.id = uf.book_id
+       WHERE uf.user_id = ?`,
+      [userId]
+    );
+
+    // เพิ่ม default cover ให้ frontend ใช้
+    const favoritesWithCover = favorites.map(book => ({
+      ...book,
+      cover: 'https://cdn-icons-png.flaticon.com/512/149/149071.png' // default cover
+    }));
+
+    res.json({ favorites: favoritesWithCover });
+  } catch (err) {
+    console.error('[GET FAVORITES ERROR]', err);
+    res.status(500).json({ error: 'Failed to load favorites' });
+  }
+});
+
+
 export default router;
