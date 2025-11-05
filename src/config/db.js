@@ -1,7 +1,10 @@
 import mysql from "mysql2/promise";
 import dotenv from "dotenv";
 // FIX 1: Change to import * as admin to correctly load the module functions (credential, apps, etc.)
-import * as admin from "firebase-admin";
+import admin from "firebase-admin";
+
+// ⭐️ FIX 2: Load .env file AT THE VERY TOP (before any code runs)
+// (This is the most important fix for ES Modules)
 dotenv.config();
 
 const pool = mysql.createPool({
@@ -30,60 +33,39 @@ pool
   });
 
 
-// 1. INITIALIZE FIREBASE ADMIN
-// You get this file from your Firebase project settings
-if (admin && admin.apps && admin.apps.length === 0) {
-  // FIX 2: Added a check for the private key being set before attempting .replace()
+// 1. ⭐️⭐️ BULLETPROOF FIREBASE ADMIN INITIALIZATION ⭐️⭐️
+try {
+  // FIX 3: Check for the required .env variable FIRST
   if (process.env.FIREBASE_PRIVATE_KEY) {
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        // The regex replacement is correct, but only runs if the variable exists
-        privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
-      }),
-    });
-    console.log("✅ Firebase Admin SDK Initialized.");
+
+    // FIX 4: Check if 'admin.apps' exists AND is empty
+    // (We only initialize if it's not already done)
+    if (!admin.apps || admin.apps.length === 0) {
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId: process.env.FIREBASE_PROJECT_ID,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+        }),
+      });
+      console.log("✅ Firebase Admin SDK Initialized.");
+    } else {
+      // This happens on hot-reloads (nodemon restarts)
+      console.log("✅ Firebase Admin SDK already initialized.");
+    }
+
   } else {
+    // This is the error you were missing before
     console.error(
-      "❌ FIREBASE_PRIVATE_KEY is missing. Admin SDK not initialized."
+      "❌ FIREBASE_PRIVATE_KEY is missing in .env. Admin SDK not initialized."
     );
   }
+} catch (error) {
+  // This catches any other weird errors (like permission issues)
+  console.error("❌ Firebase Admin SDK initialization failed:", error.message);
 }
+// ----------------------------------------------------
 
-const checkAuth = async (req, res, next) => {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1]; // Bearer TOKEN
-
-  if (!token) {
-    return res.status(401).json({ error: "Access token required" });
-  }
-
-  try {
-    // Try Firebase token first
-    if (token.length > 100) {
-      // Firebase tokens are typically longer
-      const decodedToken = await admin.auth().verifyIdToken(token);
-      req.user = {
-        uid: decodedToken.uid,
-        email: decodedToken.email,
-        authType: "firebase",
-      };
-    } else {
-      // Try JWT token
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = {
-        id: decoded.id,
-        email: decoded.email,
-        authType: "jwt",
-      };
-    }
-    next();
-  } catch (error) {
-    console.error("Token verification failed:", error);
-    res.status(403).json({ error: "Invalid token" });
-  }
-}
 
 // Export the app for use in your main server file
-export { pool, admin , checkAuth};
+export { pool, admin };

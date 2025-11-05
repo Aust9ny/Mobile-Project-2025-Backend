@@ -126,9 +126,15 @@ router.post('/firebase-login', authenticateFirebase, async (req, res) => {
     const { uid, email } = req.user;
     const { first_name, last_name } = req.body || {};
 
+
+    console.log('[DEBUG] req.body:', req.body);
+    console.log('[DEBUG] req.user:', req.user);
+
     // Try to find by uid or email
     let [rows] = await pool.query('SELECT * FROM users WHERE uid = ? OR email = ? LIMIT 1', [uid, email]);
     let user = rows[0];
+
+
 
     if (!user) {
       const [ins] = await pool.query(
@@ -150,8 +156,12 @@ router.post('/firebase-login', authenticateFirebase, async (req, res) => {
         user = rows[0];
       }
     }
+    const { access, refresh } = buildTokens(user);
+    console.log('[DEBUG] JWT_SECRET:', process.env.JWT_SECRET ? 'OK' : 'MISSING!!!');
 
     return res.json({
+      token: access,
+      refresh_token: refresh,
       user: {
         id: user.id,
         email: user.email,

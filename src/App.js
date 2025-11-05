@@ -1,12 +1,10 @@
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import usersRoutes from "./routes/users.js";
 import booksRoutes from "./routes/books.js";
 import borrowsRoutes from "./routes/borrows.js";
 import library from "./routes/library.js";
-
-dotenv.config();
+import { authenticateToken } from "./middleware/auth.js";
 const app = express();
 
 app.use(cors());
@@ -14,25 +12,6 @@ app.use(express.json());
 
 import { pool, admin } from "./config/db.js";
 
-// Middleware to verify Firebase token
-const checkAuth = async (req, res, next) => {
-  if (
-    req.headers.authorization &&
-    req.headers.authorization.startsWith("Bearer ")
-  ) {
-    const idToken = req.headers.authorization.split("Bearer ")[1];
-    try {
-      const decodedToken = await admin.auth().verifyIdToken(idToken);
-      req.user = decodedToken;
-      return next();
-    } catch (error) {
-      console.error("Error while verifying Firebase ID token:", error);
-      return res.status(403).send("Unauthorized");
-    }
-  } else {
-    return res.status(401).send("No token provided.");
-  }
-};
 
 // --- Routes ---
 
@@ -40,7 +19,7 @@ app.use("/api/users", usersRoutes);
 app.use("/api/books", booksRoutes);
 app.use("/api/borrows", borrowsRoutes);
 // Apply the checkAuth middleware to all routes in library.js
-app.use("/api/library", checkAuth, library);
+app.use("/api/library", authenticateToken, library);
 
 // Root
 app.get("/", (req, res) => {
@@ -75,48 +54,6 @@ app.use((req, res, next) => {
   next();
 });
 
-
-// Add the /user/sync route, protected by the checkAuth middleware
-app.post("/api/user/sync", checkAuth, async (req, res) => {
-  const { uid, email, name } = req.user;
-  const { userId, firebaseToken } = req.body;
-
-  if (uid !== userId) {
-    return res.status(400).send("Mismatched user ID.");
-  }
-
-  console.log(`Syncing user: ${uid} (${email})`);
-
-  try {
-    const connection = await pool.getConnection();
-    const sql = `
-      INSERT INTO users (user_id, email, name, last_seen, firebase_token)
-      VALUES (?, ?, ?, NOW(), ?)
-      ON DUPLICATE KEY UPDATE
-        email = VALUES(email),
-        name = VALUES(name),
-        last_seen = NOW(),
-        firebase_token = VALUES(firebase_token);
-    `;
-    await connection.execute(sql, [uid, email, name, firebaseToken]);
-    connection.release();
-    res.status(200).send({ message: "User synced successfully." });
-  } catch (error) {
-    console.error("MySQL sync error:", error);
-    res.status(500).send({ message: "Error syncing user to database." });
-  }
-});
-
-app.get("/api/test-db", async (req, res) => {
-  try {
-    const [rows] = await pool.query("SELECT DATABASE() AS now");
-    res.json({ success: true, time: rows[0].now });
-    console.log("DB Connection now is:", rows[0].now);
-  } catch (err) {
-    console.error("DB Connection failed:", err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
 
 // ------------------------
 // Test Users Table

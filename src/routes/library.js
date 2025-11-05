@@ -1,7 +1,8 @@
 import express from 'express';
 // Import the pool and middleware from your configuration file
-import { pool, checkAuth } from '../config/db.js'; 
+import { pool } from '../config/db.js'; 
 
+import { authenticateToken } from '../middleware/auth.js';
 const router = express.Router();
 
 /**
@@ -79,7 +80,7 @@ router.get('/books/:bookId', async (req, res) => {
  * GET /api/favorites
  * Retrieves all books the authenticated user has favorited.
  */
-router.get('/favorites', checkAuth, async (req, res) => {
+router.get('/favorites', authenticateToken, async (req, res) => {
     try {
         const userId = await getInternalUserId(req.user.uid);
         if (!userId) return res.status(404).json({ message: 'User profile not found.' });
@@ -102,7 +103,7 @@ router.get('/favorites', checkAuth, async (req, res) => {
  * POST /api/favorites/:bookId
  * Adds a book to the authenticated user's favorites.
  */
-router.post('/favorites/:bookId', checkAuth, async (req, res) => {
+router.post('/favorites/:bookId', authenticateToken, async (req, res) => {
     const { bookId } = req.params;
     try {
         const userId = await getInternalUserId(req.user.uid);
@@ -132,7 +133,7 @@ router.post('/favorites/:bookId', checkAuth, async (req, res) => {
  * DELETE /api/favorites/:bookId
  * Removes a book from the authenticated user's favorites.
  */
-router.delete('/favorites/:bookId', checkAuth, async (req, res) => {
+router.delete('/favorites/:bookId', authenticateToken, async (req, res) => {
     const { bookId } = req.params;
     try {
         const userId = await getInternalUserId(req.user.uid);
@@ -162,7 +163,7 @@ router.delete('/favorites/:bookId', checkAuth, async (req, res) => {
  * GET /api/borrows/current
  * Retrieves all currently borrowed books for the authenticated user.
  */
-router.get('/borrows/current', checkAuth, async (req, res) => {
+router.get('/borrows/current', authenticateToken, async (req, res) => {
     try {
         const userId = await getInternalUserId(req.user.uid);
         if (!userId) return res.status(404).json({ message: 'User profile not found.' });
@@ -187,7 +188,7 @@ router.get('/borrows/current', checkAuth, async (req, res) => {
  * Borrows a specific book (creates a 'borrowed' record).
  * NOTE: This is a transaction because it updates two tables (borrows and books).
  */
-router.post('/borrows/:bookId', checkAuth, async (req, res) => {
+router.post('/borrows/:bookId', authenticateToken, async (req, res) => {
     const { bookId } = req.params;
     const connection = await pool.getConnection();
 
@@ -253,7 +254,7 @@ router.post('/borrows/:bookId', checkAuth, async (req, res) => {
  * Marks a borrowed book as returned.
  * NOTE: This is also a transaction.
  */
-router.post('/borrows/return/:borrowId', checkAuth, async (req, res) => {
+router.post('/borrows/return/:borrowId', authenticateToken, async (req, res) => {
     const { borrowId } = req.params;
     const connection = await pool.getConnection();
 
@@ -308,7 +309,7 @@ router.post('/borrows/return/:borrowId', checkAuth, async (req, res) => {
  * GET /api/profile
  * Retrieves the user's detailed profile from the 'users' table.
  */
-router.get('/profile', checkAuth, async (req, res) => {
+router.get('/profile', authenticateToken, async (req, res) => {
     try {
         // Use the Firebase UID to fetch the user's profile
         const [rows] = await pool.execute(

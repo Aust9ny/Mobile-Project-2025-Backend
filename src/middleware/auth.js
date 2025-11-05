@@ -1,6 +1,5 @@
 import jwt from "jsonwebtoken";
-import { pool } from "../config/db.js";
-import * as admin from "firebase-admin";
+import { pool, admin } from "../config/db.js";
 
 export const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers["authorization"];
