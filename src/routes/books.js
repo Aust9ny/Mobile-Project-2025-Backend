@@ -27,12 +27,11 @@ router.get("/mock/:id", (req, res) => {
 // Log การดูหนังสือ (รับ userId จาก request body)
 router.post("/mock/:id/view", (req, res) => {
   const bookId = req.params.id;
-  const { userId } = req.body; // รับ userId จาก client
+  const { userId } = req.body;
   
   const book = MOCK_LIBRARY.find((b) => b.id === bookId);
   if (!book) return res.status(404).json({ error: "Book not found" });
 
-  // ตรวจสอบว่ามี userId หรือไม่
   if (!userId) {
     return res.status(400).json({ error: "userId is required" });
   }
@@ -68,13 +67,14 @@ router.post("/mock/:id/view", (req, res) => {
   
   userHistory[userId].unshift(historyItem);
 
-  // 📊 แสดง Log ใน Backend (สั้นและอ่านง่าย)
+  // แสดง Log ใน Backend
   const timestamp = new Date().toLocaleString('th-TH', { 
+    timeZone: 'Asia/Bangkok',
     hour: '2-digit', 
     minute: '2-digit', 
     second: '2-digit' 
   });
-  console.log(`📖 [${timestamp}] ${userId.substring(0, 15)}... → "${book.title}" (ครั้งที่ ${userBookViews[userId][bookId]} | รวม ${bookViews[bookId]})`);
+  console.log(`[${timestamp}] VIEW: ${userId.substring(0, 15)}... -> "${book.title}" (ครั้งที่ ${userBookViews[userId][bookId]} | รวม ${bookViews[bookId]})`);
 
   res.json({
     message: "View logged successfully",
@@ -97,7 +97,7 @@ router.get("/mock/history/:userId", (req, res) => {
 
   const history = userHistory[userId] || [];
   
-  console.log(`\n📜 [History] User: ${userId.substring(0, 20)}... → ${history.length} รายการ`);
+  console.log(`\n[History] User: ${userId.substring(0, 20)}... -> ${history.length} รายการ`);
 
   res.json({
     userId,
@@ -116,9 +116,9 @@ router.get("/mock/stats/all", (req, res) => {
     })
     .sort((a, b) => b.views - a.views);
 
-  console.log("\n📊 [Global Stats] Top Books:");
+  console.log("\n[Global Stats] Top Books:");
   sortedBooks.slice(0, 5).forEach((item, index) => {
-    console.log(`   ${index + 1}. "${item.book?.title}" → ${item.views} views`);
+    console.log(`   ${index + 1}. "${item.book?.title}" -> ${item.views} views`);
   });
   console.log(`   (${sortedBooks.length} หนังสือทั้งหมด)\n`);
 
@@ -144,9 +144,9 @@ router.get("/mock/stats/user/:userId", (req, res) => {
     })
     .sort((a, b) => b.views - a.views);
 
-  console.log(`\n📊 [User Stats] ${userId.substring(0, 20)}... Top Books:`);
+  console.log(`\n[User Stats] ${userId.substring(0, 20)}... Top Books:`);
   sortedUserBooks.slice(0, 5).forEach((item, index) => {
-    console.log(`   ${index + 1}. "${item.book?.title}" → ${item.views} views`);
+    console.log(`   ${index + 1}. "${item.book?.title}" -> ${item.views} views`);
   });
   console.log(`   (${sortedUserBooks.length} หนังสือทั้งหมด)\n`);
 
@@ -170,7 +170,7 @@ router.delete("/mock/history/:userId", (req, res) => {
   delete userHistory[userId];
   delete userBookViews[userId];
 
-  console.log(`🗑️ [Clear] User: ${userId.substring(0, 20)}... history cleared`);
+  console.log(`[Clear History] User: ${userId.substring(0, 20)}...`);
 
   res.json({
     message: "History cleared successfully",
