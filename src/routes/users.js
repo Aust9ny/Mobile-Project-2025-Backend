@@ -1,7 +1,7 @@
 import express from "express";
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import pool from '../config/db.js';
+import {pool} from '../config/db.js';
 import { authenticateToken, authenticateFirebase } from '../middleware/auth.js';
 
 const router = express.Router();

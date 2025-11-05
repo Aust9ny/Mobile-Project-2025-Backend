@@ -1,7 +1,7 @@
 // routes/borrows.js
 import express from "express";
 import { MOCK_LIBRARY } from "../data/mockBooks.js";
-
+import { pool, checkAuth } from "../config/db.js";
 const router = express.Router();
 
 const borrowHistories = {};
