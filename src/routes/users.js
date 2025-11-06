@@ -46,7 +46,7 @@ router.post('/register', async (req, res) => {
 
     // Create user aligned with schema
     const [result] = await pool.query(
-      'INSERT INTO users (uid, first_name, last_name, login_identifier, username, password, email, phone_number, auth_provider, status) VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, \"email\", \"active\")',
+      'INSERT INTO users (uid, first_name, last_name, login_identifier, username, password, email, phone_number, auth_provider, status) VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, "email", "active")',
       [fName, lName, login_identifier, username || null, hashedPassword, email || null, phone_number || null]
     );
 
@@ -126,7 +126,6 @@ router.post('/firebase-login', authenticateFirebase, async (req, res) => {
     const { uid, email } = req.user;
     const { first_name, last_name } = req.body || {};
 
-
     console.log('[DEBUG] req.body:', req.body);
     console.log('[DEBUG] req.user:', req.user);
 
@@ -134,14 +133,12 @@ router.post('/firebase-login', authenticateFirebase, async (req, res) => {
     let [rows] = await pool.query('SELECT * FROM users WHERE uid = ? OR email = ? LIMIT 1', [uid, email]);
     let user = rows[0];
 
-
-
     if (!user) {
       const [ins] = await pool.query(
         'INSERT INTO users (uid, first_name, last_name, login_identifier, username, password, email, phone_number, auth_provider, status) VALUES (?, ?, ?, ?, NULL, NULL, ?, NULL, "firebase", "active")',
         [uid, first_name || '', last_name || '', email || uid, email || null]
       );
-      ;[rows] = await pool.query('SELECT * FROM users WHERE id = ?', [ins.insertId]);
+      [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [ins.insertId]);
       user = rows[0];
     } else {
       // Ensure uid is linked
@@ -152,7 +149,7 @@ router.post('/firebase-login', authenticateFirebase, async (req, res) => {
       // Optionally update names if provided
       if (first_name !== undefined || last_name !== undefined) {
         await pool.query('UPDATE users SET first_name = COALESCE(?, first_name), last_name = COALESCE(?, last_name) WHERE id = ?', [first_name || null, last_name || null, user.id]);
-        ;[rows] = await pool.query('SELECT * FROM users WHERE id = ?', [user.id]);
+        [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [user.id]);
         user = rows[0];
       }
     }
@@ -434,68 +431,73 @@ router.post('/refresh', async (req, res) => {
   }
 });
 
-router.get('/:userId/favorites', async (req, res) => {
+// ✅ ดึงรายการโปรดของ user (รองรับทั้ง temp_user_id และ MySQL user id)
+router.get('/favorites/:userId', async (req, res) => {
   try {
-    const userId = Number(req.params.userId);
+    const { userId } = req.params;
 
-    // ดึงข้อมูล favorite พร้อมรายละเอียดหนังสือ
-    const favorites = await prisma.favorite.findMany({
-      where: { userId },
-      include: { book: true },
-    });
+    const [favorites] = await pool.query(
+      `SELECT b.* 
+       FROM user_favorites uf
+       JOIN books b ON uf.book_id = b.id
+       WHERE uf.user_id = ?
+       ORDER BY uf.created_at DESC`,
+      [userId]
+    );
 
-    // จัดรูปข้อมูลให้ง่ายต่อ frontend
-    const formatted = favorites.map(f => ({
-      id: f.book.id,
-      title: f.book.title,
-      author: f.book.author,
-      genre: f.book.genre,
-      cover: f.book.cover,
-    }));
+    console.log(`\n❤️ [Favorites] User: ${userId} → ${favorites.length} รายการ`);
 
-    return res.json({ favorites: formatted });
+    return res.json({ favorites });
   } catch (error) {
-    console.error('❌ [GET /favorites] Error:', error);
+    console.error('Error fetching favorites:', error);
     return res.status(500).json({ error: 'Failed to load favorites' });
   }
 });
 
-/**
- * ✅ เพิ่มหรือลบหนังสือจาก Favorite
- */
-router.post('/:userId/favorite', async (req, res) => {
+// ✅ เพิ่ม/ลบหนังสือจาก Favorites
+router.post('/favorites/:userId', async (req, res) => {
   try {
-    const userId = Number(req.params.userId);
+    const { userId } = req.params;
     const { bookId, action } = req.body;
 
-    if (!bookId || !action)
+    if (!bookId || !action) {
       return res.status(400).json({ error: 'bookId และ action จำเป็นต้องมี' });
+    }
 
     if (action === 'add') {
       // ตรวจสอบว่ามีอยู่แล้วหรือยัง
-      const exists = await prisma.favorite.findFirst({
-        where: { userId, bookId: Number(bookId) },
-      });
-      if (exists) return res.json({ message: 'มีอยู่แล้วในรายการโปรด' });
+      const [exists] = await pool.query(
+        'SELECT id FROM user_favorites WHERE user_id = ? AND book_id = ?',
+        [userId, bookId]
+      );
+
+      if (exists.length > 0) {
+        return res.json({ message: 'มีอยู่แล้วในรายการโปรด' });
+      }
 
       // เพิ่มใหม่
-      await prisma.favorite.create({
-        data: { userId, bookId: Number(bookId) },
-      });
+      await pool.query(
+        'INSERT INTO user_favorites (user_id, book_id) VALUES (?, ?)',
+        [userId, bookId]
+      );
 
+      console.log(`❤️ [Add Favorite] User: ${userId} → Book: ${bookId}`);
       return res.json({ message: 'เพิ่มในรายการโปรดสำเร็จ' });
     }
 
     if (action === 'remove') {
-      await prisma.favorite.deleteMany({
-        where: { userId, bookId: Number(bookId) },
-      });
+      await pool.query(
+        'DELETE FROM user_favorites WHERE user_id = ? AND book_id = ?',
+        [userId, bookId]
+      );
+
+      console.log(`💔 [Remove Favorite] User: ${userId} → Book: ${bookId}`);
       return res.json({ message: 'ลบออกจากรายการโปรดแล้ว' });
     }
 
     return res.status(400).json({ error: 'action ไม่ถูกต้อง (add/remove เท่านั้น)' });
   } catch (error) {
-    console.error('❌ [POST /favorite] Error:', error);
+    console.error('Error updating favorites:', error);
     return res.status(500).json({ error: 'Failed to update favorites' });
   }
 });

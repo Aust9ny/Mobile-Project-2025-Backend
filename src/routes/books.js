@@ -1,181 +1,298 @@
 import express from "express";
-import { MOCK_LIBRARY } from "../data/mockBooks.js";
+import { pool } from "../config/db.js";
 
 const router = express.Router();
 
-// ---------------------- In-Memory Storage ----------------------
-const bookViews = {};       // { bookId: totalViews }
-const userHistory = {};     // { userId: [{ bookId, timestamp, book }] }
-const userBookViews = {};   // { userId: { bookId: count } }
-
-// Default cover if missing
 const DEFAULT_BOOK_COVER = "https://via.placeholder.com/150x200/386156/FFFFFF?text=No+Cover";
 
-// ---------------------- Helper ----------------------
+// ---------------------- Helper Functions ----------------------
 const ensureBookCover = (book) => {
-  if (!book) return null; // ป้องกัน book ที่เป็น null หรือ undefined
+  if (!book) return null;
   
-  if (!book.cover || book.cover.trim() === "") return { ...book, cover: DEFAULT_BOOK_COVER };
-  if (book.cover.startsWith("/")) return { ...book, cover: `http://10.0.2.2:4000${book.cover}` };
-  if (!/^https?:\/\//i.test(book.cover)) return { ...book, cover: `http://10.0.2.2:4000/${book.cover}` };
+  if (!book.cover || book.cover.trim() === "") {
+    return { ...book, cover: DEFAULT_BOOK_COVER };
+  }
+  if (book.cover.startsWith("/")) {
+    return { ...book, cover: `http://10.0.2.2:4000${book.cover}` };
+  }
+  if (!/^https?:\/\//i.test(book.cover)) {
+    return { ...book, cover: `http://10.0.2.2:4000/${book.cover}` };
+  }
   return book;
 };
 
-// ---------------------- Mock Library Core ----------------------
+// ---------------------- Book Catalog Routes ----------------------
 
-// ดึงหนังสือทั้งหมด
-router.get("/mock/all", (req, res) => {
-  const booksWithCover = MOCK_LIBRARY.map(ensureBookCover);
-  res.json({ books: booksWithCover });
-});
-
-// ดึงหนังสือตาม ID
-router.get("/mock/:id", (req, res) => {
-  const book = MOCK_LIBRARY.find((b) => b.id === req.params.id);
-  if (!book) return res.status(404).json({ error: "Book not found" });
-  res.json(ensureBookCover(book));
-});
-
-// ⭐️ [เพิ่มใหม่] ค้นหาหนังสือ (สำหรับ SearchScreen)
-router.get("/search", (req, res) => {
-  // 1. ดึง query string 'q' จาก URL (เช่น /search?q=แฮร์รี่)
-  const query = (req.query.q || "").toLowerCase().trim();
-
-  let results = [];
-
-  // 2. ถ้า query ว่าง (เหมือนตอนที่ SearchScreen โหลดครั้งแรก)
-  if (query === "") {
-    // ส่งหนังสือทั้งหมดกลับไป
-    results = MOCK_LIBRARY.map(ensureBookCover);
-  } else {
-    // 3. ถ้ามี query, ค้นหาจาก title และ author
-    results = MOCK_LIBRARY.filter(book =>
-      (book.title && book.title.toLowerCase().includes(query)) ||
-      (book.author && book.author.toLowerCase().includes(query))
-    ).map(ensureBookCover);
+// ✅ ดึงหนังสือทั้งหมด
+router.get("/mock/all", async (req, res) => {
+  try {
+    const [books] = await pool.query('SELECT * FROM books ORDER BY created_at DESC');
+    const booksWithCover = books.map(ensureBookCover);
+    res.json({ books: booksWithCover });
+  } catch (error) {
+    console.error('Error fetching all books:', error);
+    res.status(500).json({ error: 'Failed to fetch books' });
   }
-
-  // (Optional) Log การค้นหา
-  console.log(`\n🔍 [Search] Query: "${req.query.q || ''}" → ${results.length} ผลลัพธ์`);
-  
-  // 4. ส่งข้อมูลกลับใน format ที่ React Native คาดหวัง
-  res.json({ books: results });
 });
 
+// ✅ ดึงหนังสือตาม ID
+router.get("/mock/:id", async (req, res) => {
+  try {
+    const [books] = await pool.query('SELECT * FROM books WHERE id = ?', [req.params.id]);
+    
+    if (books.length === 0) {
+      return res.status(404).json({ error: "Book not found" });
+    }
+    
+    res.json(ensureBookCover(books[0]));
+  } catch (error) {
+    console.error('Error fetching book by ID:', error);
+    res.status(500).json({ error: 'Failed to fetch book' });
+  }
+});
+
+// ✅ ค้นหาหนังสือ (สำหรับ SearchScreen)
+router.get("/search", async (req, res) => {
+  try {
+    const query = (req.query.q || "").toLowerCase().trim();
+    let sql = 'SELECT * FROM books';
+    const params = [];
+
+    if (query !== "") {
+      sql += ' WHERE LOWER(title) LIKE ? OR LOWER(author) LIKE ?';
+      const searchTerm = `%${query}%`;
+      params.push(searchTerm, searchTerm);
+    }
+
+    sql += ' ORDER BY created_at DESC';
+
+    const [books] = await pool.query(sql, params);
+    const results = books.map(ensureBookCover);
+
+    console.log(`\n🔍 [Search] Query: "${req.query.q || ''}" → ${results.length} ผลลัพธ์`);
+    
+    res.json({ books: results });
+  } catch (error) {
+    console.error('Error searching books:', error);
+    res.status(500).json({ error: 'Failed to search books' });
+  }
+});
 
 // ---------------------- View Tracking System ----------------------
 
-// Log การดูหนังสือ
-router.post("/mock/:id/view", (req, res) => {
-  const bookId = req.params.id;
+// ✅ Log การดูหนังสือ
+router.post("/mock/:id/view", async (req, res) => {
+  const { id: bookId } = req.params;
   const { userId } = req.body;
 
-  const book = MOCK_LIBRARY.find((b) => b.id === bookId);
-  if (!book) return res.status(404).json({ error: "Book not found" });
-  if (!userId) return res.status(400).json({ error: "userId is required" });
+  if (!userId) {
+    return res.status(400).json({ error: "userId is required" });
+  }
 
-  // เพิ่มจำนวน view
-  bookViews[bookId] = (bookViews[bookId] || 0) + 1;
+  try {
+    // ตรวจสอบว่าหนังสือมีอยู่จริง
+    const [books] = await pool.query('SELECT * FROM books WHERE id = ?', [bookId]);
+    
+    if (books.length === 0) {
+      return res.status(404).json({ error: "Book not found" });
+    }
 
-  // เพิ่มจำนวน view ของ user
-  if (!userBookViews[userId]) userBookViews[userId] = {};
-  userBookViews[userId][bookId] = (userBookViews[userId][bookId] || 0) + 1;
+    const book = books[0];
 
-  // เพิ่มประวัติ user
-  if (!userHistory[userId]) userHistory[userId] = [];
-  const existingIndex = userHistory[userId].findIndex(h => h.bookId === bookId);
+    // บันทึกประวัติการดู
+    await pool.query(
+      'INSERT INTO book_views (book_id, user_id) VALUES (?, ?)',
+      [bookId, userId]
+    );
 
-  const historyItem = {
-    bookId,
-    book: ensureBookCover(book),
-    viewedAt: new Date().toISOString(),
-    viewCount: userBookViews[userId][bookId],
-  };
+    // นับจำนวน view ทั้งหมดของหนังสือเล่มนี้
+    const [viewCount] = await pool.query(
+      'SELECT COUNT(*) as total FROM book_views WHERE book_id = ?',
+      [bookId]
+    );
 
-  if (existingIndex !== -1) userHistory[userId].splice(existingIndex, 1);
-  userHistory[userId].unshift(historyItem);
+    // นับจำนวน view ของ user คนนี้
+    const [userViewCount] = await pool.query(
+      'SELECT COUNT(*) as total FROM book_views WHERE book_id = ? AND user_id = ?',
+      [bookId, userId]
+    );
 
-  const timestamp = new Date().toLocaleString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  console.log(`📖 [${timestamp}] ${userId.substring(0, 15)}... → "${book.title}" (ครั้งที่ ${userBookViews[userId][bookId]} | รวม ${bookViews[bookId]})`);
+    const timestamp = new Date().toLocaleString('th-TH', { 
+      hour: '2-digit', 
+      minute: '2-digit', 
+      second: '2-digit' 
+    });
 
-  res.json({
-    message: "View logged successfully",
-    data: {
-      book: ensureBookCover(book),
-      userViewCount: userBookViews[userId][bookId],
-      totalViews: bookViews[bookId],
-      timestamp: historyItem.viewedAt,
-    },
-  });
+    console.log(
+      `📖 [${timestamp}] ${userId.substring(0, 15)}... → "${book.title}" ` +
+      `(ครั้งที่ ${userViewCount[0].total} | รวม ${viewCount[0].total})`
+    );
+
+    res.json({
+      message: "View logged successfully",
+      data: {
+        book: ensureBookCover(book),
+        userViewCount: userViewCount[0].total,
+        totalViews: viewCount[0].total,
+        timestamp: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error('Error logging view:', error);
+    res.status(500).json({ error: 'Failed to log view' });
+  }
 });
 
-// ดึงประวัติการดูหนังสือของ user
-router.get("/mock/history/:userId", (req, res) => {
+// ✅ ดึงประวัติการดูหนังสือของ user
+router.get("/mock/history/:userId", async (req, res) => {
   const { userId } = req.params;
-  if (!userId) return res.status(400).json({ error: "userId is required" });
 
-  const history = (userHistory[userId] || []).map(h => ({
-    ...h,
-    book: ensureBookCover(h.book)
-  })).filter(h => h.book !== null); // กรองอันที่ book เป็น null ออก
+  if (!userId) {
+    return res.status(400).json({ error: "userId is required" });
+  }
 
-  console.log(`\n📜 [History] User: ${userId.substring(0, 20)}... → ${history.length} รายการ`);
+  try {
+    const [history] = await pool.query(
+      `SELECT 
+        bv.id,
+        bv.book_id as bookId,
+        bv.viewed_at as viewedAt,
+        b.*,
+        COUNT(*) OVER (PARTITION BY bv.book_id) as viewCount
+      FROM book_views bv
+      JOIN books b ON bv.book_id = b.id
+      WHERE bv.user_id = ?
+      ORDER BY bv.viewed_at DESC`,
+      [userId]
+    );
 
-  res.json({ userId, history, totalItems: history.length });
+    const formattedHistory = history.map(item => ({
+      bookId: item.bookId,
+      book: ensureBookCover(item),
+      viewedAt: item.viewedAt,
+      viewCount: item.viewCount
+    }));
+
+    console.log(`\n📜 [History] User: ${userId.substring(0, 20)}... → ${formattedHistory.length} รายการ`);
+
+    res.json({ 
+      userId, 
+      history: formattedHistory, 
+      totalItems: formattedHistory.length 
+    });
+  } catch (error) {
+    console.error('Error fetching history:', error);
+    res.status(500).json({ error: 'Failed to fetch history' });
+  }
 });
 
-// ดึงสถิติการดูหนังสือทั้งหมด
-router.get("/mock/stats/all", (req, res) => {
-  const sortedBooks = Object.entries(bookViews)
-    .map(([bookId, views]) => {
-      const book = MOCK_LIBRARY.find(b => b.id === bookId);
-      return { bookId, book: ensureBookCover(book), views };
-    })
-    .filter(item => item.book !== null) // กรองอันที่ book เป็น null ออก
-    .sort((a, b) => b.views - a.views);
+// ✅ ดึงสถิติการดูหนังสือทั้งหมด
+router.get("/mock/stats/all", async (req, res) => {
+  try {
+    const [stats] = await pool.query(
+      `SELECT 
+        b.*,
+        COUNT(bv.id) as views
+      FROM books b
+      LEFT JOIN book_views bv ON b.id = bv.book_id
+      GROUP BY b.id
+      ORDER BY views DESC
+      LIMIT 20`
+    );
 
-  console.log("\n📊 [Global Stats] Top Books:");
-  sortedBooks.slice(0, 5).forEach((item, idx) => {
-    console.log(`   ${idx + 1}. "${item.book?.title}" → ${item.views} views`);
-  });
+    const topBooks = stats.map(item => ({
+      bookId: item.id,
+      book: ensureBookCover(item),
+      views: item.views
+    }));
 
-  res.json({ topBooks: sortedBooks, totalTrackedBooks: sortedBooks.length });
+    console.log("\n📊 [Global Stats] Top Books:");
+    topBooks.slice(0, 5).forEach((item, idx) => {
+      console.log(`   ${idx + 1}. "${item.book?.title}" → ${item.views} views`);
+    });
+
+    res.json({ 
+      topBooks, 
+      totalTrackedBooks: topBooks.length 
+    });
+  } catch (error) {
+    console.error('Error fetching stats:', error);
+    res.status(500).json({ error: 'Failed to fetch stats' });
+  }
 });
 
-// ดึงสถิติการดูของ user
-router.get("/mock/stats/user/:userId", (req, res) => {
+// ✅ ดึงสถิติการดูของ user
+router.get("/mock/stats/user/:userId", async (req, res) => {
   const { userId } = req.params;
-  if (!userId) return res.status(400).json({ error: "userId is required" });
 
-  const userViews = userBookViews[userId] || {};
-  const sortedUserBooks = Object.entries(userViews)
-    .map(([bookId, views]) => {
-      const book = MOCK_LIBRARY.find(b => b.id === bookId);
-      return { bookId, book: ensureBookCover(book), views };
-    })
-    .filter(item => item.book !== null) // กรองอันที่ book เป็น null ออก
-    .sort((a, b) => b.views - a.views);
+  if (!userId) {
+    return res.status(400).json({ error: "userId is required" });
+  }
 
-  console.log(`\n📊 [User Stats] ${userId.substring(0, 20)}... Top Books:`);
-  sortedUserBooks.slice(0, 5).forEach((item, idx) => {
-    console.log(`   ${idx + 1}. "${item.book?.title}" → ${item.views} views`);
-  });
+  try {
+    const [stats] = await pool.query(
+      `SELECT 
+        b.*,
+        COUNT(bv.id) as views
+      FROM book_views bv
+      JOIN books b ON bv.book_id = b.id
+      WHERE bv.user_id = ?
+      GROUP BY b.id
+      ORDER BY views DESC
+      LIMIT 20`,
+      [userId]
+    );
 
-  res.json({ userId, topBooks: sortedUserBooks, totalBooksViewed: sortedUserBooks.length });
+    const topBooks = stats.map(item => ({
+      bookId: item.id,
+      book: ensureBookCover(item),
+      views: item.views
+    }));
+
+    console.log(`\n📊 [User Stats] ${userId.substring(0, 20)}... Top Books:`);
+    topBooks.slice(0, 5).forEach((item, idx) => {
+      console.log(`   ${idx + 1}. "${item.book?.title}" → ${item.views} views`);
+    });
+
+    res.json({ 
+      userId, 
+      topBooks, 
+      totalBooksViewed: topBooks.length 
+    });
+  } catch (error) {
+    console.error('Error fetching user stats:', error);
+    res.status(500).json({ error: 'Failed to fetch user stats' });
+  }
 });
 
-// ลบประวัติทั้งหมดของ user
-router.delete("/mock/history/:userId", (req, res) => {
+// ✅ ลบประวัติทั้งหมดของ user
+router.delete("/mock/history/:userId", async (req, res) => {
   const { userId } = req.params;
-  if (!userId) return res.status(400).json({ error: "userId is required" });
 
-  const hadHistory = userHistory[userId]?.length > 0;
-  delete userHistory[userId];
-  delete userBookViews[userId];
+  if (!userId) {
+    return res.status(400).json({ error: "userId is required" });
+  }
 
-  console.log(`🗑️ [Clear] User: ${userId.substring(0, 20)}... history cleared`);
+  try {
+    const [result] = await pool.query(
+      'DELETE FROM book_views WHERE user_id = ?',
+      [userId]
+    );
 
-  res.json({ message: "History cleared successfully", userId, hadHistory });
+    const hadHistory = result.affectedRows > 0;
+
+    console.log(`🗑️ [Clear] User: ${userId.substring(0, 20)}... history cleared (${result.affectedRows} records)`);
+
+    res.json({ 
+      message: "History cleared successfully", 
+      userId, 
+      hadHistory,
+      deletedCount: result.affectedRows
+    });
+  } catch (error) {
+    console.error('Error clearing history:', error);
+    res.status(500).json({ error: 'Failed to clear history' });
+  }
 });
 
 export default router;

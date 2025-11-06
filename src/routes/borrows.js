@@ -1,10 +1,9 @@
-// routes/borrows.js
 import express from "express";
-import { MOCK_LIBRARY } from "../data/mockBooks.js";
+import { pool } from "../config/db.js";
+
 const router = express.Router();
 
-const borrowHistories = {};
-
+// ---------------------- Helper Functions ----------------------
 const formatThaiDateTime = (dateString) => {
   const date = new Date(dateString);
   const thaiMonths = [
@@ -24,104 +23,85 @@ const formatThaiDateTime = (dateString) => {
   return `วัน${dayName}ที่ ${day} ${month} ${year} เวลา ${hours}:${minutes}:${seconds} น.`;
 };
 
-const formatThaiDate = (dateString) => {
-  const date = new Date(dateString);
-  const thaiMonths = [
-    'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
-    'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
-  ];
-  
-  const day = date.getDate();
-  const month = thaiMonths[date.getMonth()];
-  const year = date.getFullYear() + 543;
-  
-  return `${day} ${month} ${year}`;
-};
+// ---------------------- User Borrows ----------------------
 
-const logBorrowHistory = (bookId, action = '') => {
-  const book = MOCK_LIBRARY.find(b => b.id === bookId);
-  const history = borrowHistories[bookId] || [];
+// ✅ ดึงรายการหนังสือที่ user กำลังยืมอยู่
+router.get("/user/:userId", async (req, res) => {
+  const { userId } = req.params;
 
-  const border = '═'.repeat(70);
-  const line = '─'.repeat(70);
-
-  console.log(`\n╔${border}╗`);
-  console.log(`║  ประวัติการยืม - ${action}`.padEnd(72) + '║');
-  console.log(`╠${border}╣`);
-  console.log(`║  หนังสือ: "${book?.title}"`.padEnd(72) + '║');
-  console.log(`║  ID: ${bookId}`.padEnd(72) + '║');
-  console.log(`║  สถิติ: ทั้งหมด ${book?.total} เล่ม | ยืมไป ${history.length} เล่ม | เหลือ ${book?.total - history.length} เล่ม`.padEnd(72) + '║');
-  console.log(`╠${border}╣`);
-
-  if (history.length === 0) {
-    console.log(`║  ไม่มีผู้ใช้อยู่ในระบบยืมตอนนี้`.padEnd(72) + '║');
-  } else {
-    history.forEach((h, index) => {
-      const now = new Date();
-      const borrowDate = new Date(h.borrowDate);
-      const dueDate = new Date(h.dueDate);
-      const daysLeft = Math.ceil((dueDate.getTime() - now.getTime()) / (1000*60*60*24));
-      const status = h.extended ? "ยืมต่อแล้ว" : "ยังไม่ยืมต่อ";
-      
-      let timeStatus;
-      if (daysLeft < 0) {
-        timeStatus = `เกินกำหนด ${Math.abs(daysLeft)} วัน`;
-      } else if (daysLeft <= 3) {
-        timeStatus = `เหลือ ${daysLeft} วัน (ใกล้ครบกำหนด)`;
-      } else {
-        timeStatus = `เหลือ ${daysLeft} วัน`;
-      }
-
-      console.log(`║`.padEnd(72) + '║');
-      console.log(`║  ผู้ยืมคนที่ ${index + 1}:`.padEnd(72) + '║');
-      console.log(`║     User ID    : ${h.userId}`.padEnd(72) + '║');
-      console.log(`║     วันที่ยืม : ${formatThaiDateTime(h.borrowDate)}`.padEnd(72) + '║');
-      console.log(`║     กำหนดคืน : ${formatThaiDateTime(h.dueDate)}`.padEnd(72) + '║');
-      console.log(`║     สถานะ    : ${status}`.padEnd(72) + '║');
-      console.log(`║     เวลาคงเหลือ: ${timeStatus}`.padEnd(72) + '║');
-      
-      if (index < history.length - 1) {
-        console.log(`║  ${line}`.padEnd(72) + '║');
-      }
-    });
-  }
-  
-  console.log(`╚${border}╝\n`);
-};
-
-router.get("/mock/:id/stats", (req, res) => {
-  const { id } = req.params;
-  
-  const book = MOCK_LIBRARY.find((b) => b.id === id);
-  if (!book) {
-    console.log(`\nไม่พบหนังสือ ID: ${id}`);
-    return res.status(404).json({ error: "Book not found" });
+  if (!userId) {
+    return res.status(400).json({ error: "Missing userId" });
   }
 
-  const borrowed = borrowHistories[book.id]?.length || 0;
-  const available = book.total - borrowed;
+  try {
+    const [borrows] = await pool.query(
+      `SELECT 
+        br.*,
+        b.title,
+        b.author,
+        b.cover,
+        b.genre
+      FROM borrows br
+      JOIN books b ON br.book_id = b.id
+      WHERE br.user_id = ? AND br.status = "borrowed"
+      ORDER BY br.due_date ASC`,
+      [userId]
+    );
 
-  const now = new Date();
-  const timestamp = formatThaiDateTime(now.toISOString());
+    console.log(`\n📚 [User Borrows] User: ${userId} → ${borrows.length} รายการ`);
 
-  console.log(`\n╔═══════════════════════════════════════════════════════════════════╗`);
-  console.log(`║  ดึงสถิติหนังสือ`);
-  console.log(`╠═══════════════════════════════════════════════════════════════════╣`);
-  console.log(`║  หนังสือ: "${book.title}"`);
-  console.log(`║  เวลา: ${timestamp}`);
-  console.log(`║  ทั้งหมด: ${book.total} เล่ม | ยืมแล้ว: ${borrowed} เล่ม | คงเหลือ: ${available} เล่ม`);
-  console.log(`╚═══════════════════════════════════════════════════════════════════╝\n`);
-
-  return res.json({
-    bookId: book.id,
-    title: book.title,
-    total: book.total,
-    borrowed: borrowed,
-    available: available
-  });
+    res.json({ borrows, totalItems: borrows.length });
+  } catch (error) {
+    console.error('Error fetching user borrows:', error);
+    res.status(500).json({ error: 'Failed to fetch borrows' });
+  }
 });
 
-router.post("/mock/:id/borrow", (req, res) => {
+// ---------------------- Book Stats ----------------------
+
+// ✅ ดึงสถิติหนังสือ (คงเหลือ/ยืมแล้ว)
+router.get("/mock/:id/stats", async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const [books] = await pool.query('SELECT * FROM books WHERE id = ?', [id]);
+    
+    if (books.length === 0) {
+      console.log(`\nไม่พบหนังสือ ID: ${id}`);
+      return res.status(404).json({ error: "Book not found" });
+    }
+
+    const book = books[0];
+    const borrowed = book.total - book.available;
+    const available = book.available;
+
+    const timestamp = formatThaiDateTime(new Date().toISOString());
+
+    console.log(`\n╔═══════════════════════════════════════════════════════════════════╗`);
+    console.log(`║  ดึงสถิติหนังสือ`);
+    console.log(`╠═══════════════════════════════════════════════════════════════════╣`);
+    console.log(`║  หนังสือ: "${book.title}"`);
+    console.log(`║  เวลา: ${timestamp}`);
+    console.log(`║  ทั้งหมด: ${book.total} เล่ม | ยืมแล้ว: ${borrowed} เล่ม | คงเหลือ: ${available} เล่ม`);
+    console.log(`╚═══════════════════════════════════════════════════════════════════╝\n`);
+
+    return res.json({
+      bookId: book.id,
+      title: book.title,
+      total: book.total,
+      borrowed: borrowed,
+      available: available
+    });
+  } catch (error) {
+    console.error('Error fetching book stats:', error);
+    res.status(500).json({ error: 'Failed to fetch stats' });
+  }
+});
+
+// ---------------------- Borrow Book ----------------------
+
+// ✅ ยืมหนังสือ
+router.post("/mock/:id/borrow", async (req, res) => {
   const { id } = req.params;
   const { userId, action } = req.body;
 
@@ -132,41 +112,69 @@ router.post("/mock/:id/borrow", (req, res) => {
     return res.status(400).json({ error: "Missing userId" });
   }
 
-  const book = MOCK_LIBRARY.find((b) => b.id === id);
-  if (!book) {
-    console.log(`ยืมไม่สำเร็จ: ไม่พบหนังสือ ID ${id}`);
-    return res.status(404).json({ error: "Book not found" });
+  if (action !== "borrow") {
+    return res.status(400).json({ error: "Invalid action" });
   }
 
-  if (!borrowHistories[book.id]) borrowHistories[book.id] = [];
+  const connection = await pool.getConnection();
 
-  const userHistory = borrowHistories[book.id].find((b) => b.userId === userId);
+  try {
+    await connection.beginTransaction();
 
-  if (action === "borrow") {
-    if (userHistory) {
+    // ตรวจสอบหนังสือ (lock row)
+    const [books] = await connection.query(
+      'SELECT * FROM books WHERE id = ? FOR UPDATE',
+      [id]
+    );
+
+    if (books.length === 0) {
+      await connection.rollback();
+      console.log(`ยืมไม่สำเร็จ: ไม่พบหนังสือ ID ${id}`);
+      return res.status(404).json({ error: "Book not found" });
+    }
+
+    const book = books[0];
+
+    // ตรวจสอบว่า user ยืมอยู่แล้วหรือไม่
+    const [existingBorrow] = await connection.query(
+      'SELECT id FROM borrows WHERE book_id = ? AND user_id = ? AND status = "borrowed"',
+      [id, userId]
+    );
+
+    if (existingBorrow.length > 0) {
+      await connection.rollback();
       console.log(`\nยืมไม่สำเร็จ: ผู้ใช้ "${userId}" ยืมหนังสือ "${book.title}" อยู่แล้ว`);
-      console.log(`   เวลา: ${formatThaiDateTime(new Date().toISOString())}\n`);
-      logBorrowHistory(book.id, 'ยืมไม่สำเร็จ (ยืมซ้ำ)');
       return res.status(400).json({ error: "คุณยืมหนังสือเล่มนี้อยู่แล้ว" });
     }
 
-    const borrowed = borrowHistories[book.id].length;
-    if (borrowed >= book.total) {
+    // ตรวจสอบว่ามีหนังสือเหลือหรือไม่
+    if (book.available <= 0) {
+      await connection.rollback();
       console.log(`\nยืมไม่สำเร็จ: หนังสือ "${book.title}" หมดแล้ว`);
-      console.log(`   เวลา: ${formatThaiDateTime(new Date().toISOString())}\n`);
-      logBorrowHistory(book.id, 'ยืมไม่สำเร็จ (หนังสือหมด)');
       return res.status(400).json({ error: "หนังสือหมด" });
     }
 
+    // คำนวณวันครบกำหนด (7 วัน)
     const now = new Date();
     const dueDate = new Date(now.getTime() + 7*24*60*60*1000);
 
-    borrowHistories[book.id].push({
-      userId,
-      borrowDate: now.toISOString(),
-      dueDate: dueDate.toISOString(),
-      extended: false
-    });
+    // บันทึกการยืม
+    await connection.query(
+      'INSERT INTO borrows (book_id, user_id, borrow_date, due_date, status) VALUES (?, ?, ?, ?, "borrowed")',
+      [id, userId, now, dueDate]
+    );
+
+    // ลดจำนวนหนังสือที่ available
+    await connection.query(
+      'UPDATE books SET available = available - 1 WHERE id = ?',
+      [id]
+    );
+
+    // ดึงข้อมูลใหม่
+    const [updatedBooks] = await connection.query('SELECT * FROM books WHERE id = ?', [id]);
+    const updatedBook = updatedBooks[0];
+
+    await connection.commit();
 
     console.log(`\n╔═══════════════════════════════════════════════════════════════════╗`);
     console.log(`║  ยืมหนังสือสำเร็จ`);
@@ -178,32 +186,31 @@ router.post("/mock/:id/borrow", (req, res) => {
     console.log(`║  ระยะเวลา: 7 วัน`);
     console.log(`╚═══════════════════════════════════════════════════════════════════╝`);
 
-    logBorrowHistory(book.id, 'ยืมสำเร็จ');
-
     return res.json({ 
       success: true,
       dueDate: dueDate.toISOString(),
-      book: { 
-        ...book, 
-        borrowed: borrowHistories[book.id].length, 
-        available: book.total - borrowHistories[book.id].length, 
-        total: book.total 
-      },
-      updatedStats: { // ✅ เพิ่มส่วนนี้
-        total: book.total,
-        borrowed: borrowHistories[book.id].length,
-        available: book.total - borrowHistories[book.id].length
+      book: updatedBook,
+      updatedStats: {
+        total: updatedBook.total,
+        borrowed: updatedBook.total - updatedBook.available,
+        available: updatedBook.available
       }
     });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error borrowing book:', error);
+    res.status(500).json({ error: 'Failed to borrow book' });
+  } finally {
+    connection.release();
   }
-
-  console.log(`Invalid action: ${action}`);
-  return res.status(400).json({ error: "Invalid action" });
 });
 
-router.post("/mock/:id/return", (req, res) => {
+// ---------------------- Return Book ----------------------
+
+// ✅ คืนหนังสือ
+router.post("/mock/:id/return", async (req, res) => {
   const { id } = req.params;
-  const { userId, borrowDate, dueDate } = req.body;
+  const { userId } = req.body;
 
   console.log(`\nได้รับคำขอคืนหนังสือ - User: ${userId}, Book ID: ${id}`);
 
@@ -212,72 +219,88 @@ router.post("/mock/:id/return", (req, res) => {
     return res.status(400).json({ error: "Missing userId" });
   }
 
-  const book = MOCK_LIBRARY.find((b) => b.id === id);
-  if (!book) {
-    console.log(`คืนไม่สำเร็จ: ไม่พบหนังสือ ID ${id}`);
-    return res.status(404).json({ error: "Book not found" });
-  }
+  const connection = await pool.getConnection();
 
-  if (!borrowHistories[book.id]) borrowHistories[book.id] = [];
+  try {
+    await connection.beginTransaction();
 
-  let userHistory = borrowHistories[book.id].find((b) => b.userId === userId);
-  if (!userHistory && borrowDate && dueDate) {
-    userHistory = { userId, borrowDate, dueDate, extended: false };
-    borrowHistories[book.id].push(userHistory);
-  }
+    // หาการยืมที่ active
+    const [borrows] = await connection.query(
+      'SELECT * FROM borrows WHERE book_id = ? AND user_id = ? AND status = "borrowed" FOR UPDATE',
+      [id, userId]
+    );
 
-  if (!userHistory) {
-    console.log(`\nคืนไม่สำเร็จ: ผู้ใช้ "${userId}" ไม่เคยยืมหนังสือ "${book.title}"`);
-    console.log(`   เวลา: ${formatThaiDateTime(new Date().toISOString())}\n`);
-    logBorrowHistory(book.id, 'คืนไม่สำเร็จ (ไม่มีประวัติยืม)');
-    return res.status(400).json({ error: "คุณไม่ได้ยืมหนังสือเล่มนี้" });
-  }
-
-  const now = new Date();
-  const originalDueDate = new Date(userHistory.dueDate);
-  const daysLate = Math.ceil((now.getTime() - originalDueDate.getTime()) / (1000*60*60*24));
-  const isLate = daysLate > 0;
-
-  borrowHistories[book.id] = borrowHistories[book.id].filter(b => b.userId !== userId);
-
-  console.log(`\n╔═══════════════════════════════════════════════════════════════════╗`);
-  console.log(`║  คืนหนังสือสำเร็จ`);
-  console.log(`╠═══════════════════════════════════════════════════════════════════╣`);
-  console.log(`║  หนังสือ: "${book.title}"`);
-  console.log(`║  ผู้คืน: ${userId}`);
-  console.log(`║  วันที่ยืม: ${formatThaiDateTime(userHistory.borrowDate)}`);
-  console.log(`║  กำหนดคืน: ${formatThaiDateTime(userHistory.dueDate)}`);
-  console.log(`║  วันที่คืนจริง: ${formatThaiDateTime(now.toISOString())}`);
-  
-  if (isLate) {
-    console.log(`║  สถานะ: คืนเกินกำหนด ${daysLate} วัน`);
-  } else {
-    console.log(`║  สถานะ: คืนตรงเวลา`);
-  }
-  
-  console.log(`╚═══════════════════════════════════════════════════════════════════╝`);
-
-  logBorrowHistory(book.id, 'คืนสำเร็จ');
-
-  return res.json({ 
-    success: true,
-    isLate,
-    daysLate: isLate ? daysLate : 0,
-    book: { 
-      ...book, 
-      borrowed: borrowHistories[book.id].length, 
-      available: book.total - borrowHistories[book.id].length, 
-      total: book.total 
-    },
-    updatedStats: { // ✅ เพิ่มส่วนนี้
-      total: book.total,
-      borrowed: borrowHistories[book.id].length,
-      available: book.total - borrowHistories[book.id].length
+    if (borrows.length === 0) {
+      await connection.rollback();
+      console.log(`\nคืนไม่สำเร็จ: ผู้ใช้ "${userId}" ไม่เคยยืมหนังสือ ID ${id}`);
+      return res.status(400).json({ error: "คุณไม่ได้ยืมหนังสือเล่มนี้" });
     }
-  });
+
+    const borrow = borrows[0];
+    const now = new Date();
+    const dueDate = new Date(borrow.due_date);
+    const daysLate = Math.ceil((now.getTime() - dueDate.getTime()) / (1000*60*60*24));
+    const isLate = daysLate > 0;
+
+    // อัปเดตสถานะการยืม
+    await connection.query(
+      'UPDATE borrows SET status = "returned", return_date = ? WHERE id = ?',
+      [now, borrow.id]
+    );
+
+    // เพิ่มจำนวนหนังสือที่ available
+    await connection.query(
+      'UPDATE books SET available = available + 1 WHERE id = ?',
+      [id]
+    );
+
+    // ดึงข้อมูลหนังสือใหม่
+    const [books] = await connection.query('SELECT * FROM books WHERE id = ?', [id]);
+    const book = books[0];
+
+    await connection.commit();
+
+    console.log(`\n╔═══════════════════════════════════════════════════════════════════╗`);
+    console.log(`║  คืนหนังสือสำเร็จ`);
+    console.log(`╠═══════════════════════════════════════════════════════════════════╣`);
+    console.log(`║  หนังสือ: "${book.title}"`);
+    console.log(`║  ผู้คืน: ${userId}`);
+    console.log(`║  วันที่ยืม: ${formatThaiDateTime(borrow.borrow_date)}`);
+    console.log(`║  กำหนดคืน: ${formatThaiDateTime(borrow.due_date)}`);
+    console.log(`║  วันที่คืนจริง: ${formatThaiDateTime(now.toISOString())}`);
+    
+    if (isLate) {
+      console.log(`║  สถานะ: คืนเกินกำหนด ${daysLate} วัน`);
+    } else {
+      console.log(`║  สถานะ: คืนตรงเวลา`);
+    }
+    
+    console.log(`╚═══════════════════════════════════════════════════════════════════╝`);
+
+    return res.json({ 
+      success: true,
+      isLate,
+      daysLate: isLate ? daysLate : 0,
+      book,
+      updatedStats: {
+        total: book.total,
+        borrowed: book.total - book.available,
+        available: book.available
+      }
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error returning book:', error);
+    res.status(500).json({ error: 'Failed to return book' });
+  } finally {
+    connection.release();
+  }
 });
 
-router.post("/mock/:id/extend", (req, res) => {
+// ---------------------- Extend Borrow ----------------------
+
+// ✅ ยืมต่อหนังสือ
+router.post("/mock/:id/extend", async (req, res) => {
   const { id } = req.params;
   const { userId } = req.body;
 
@@ -288,80 +311,164 @@ router.post("/mock/:id/extend", (req, res) => {
     return res.status(400).json({ error: "Missing userId" });
   }
 
-  const book = MOCK_LIBRARY.find((b) => b.id === id);
-  if (!book) {
-    console.log(`ยืมต่อไม่สำเร็จ: ไม่พบหนังสือ ID ${id}`);
-    return res.status(404).json({ error: "Book not found" });
-  }
+  const connection = await pool.getConnection();
 
-  if (!borrowHistories[book.id]) borrowHistories[book.id] = [];
+  try {
+    await connection.beginTransaction();
 
-  const userHistory = borrowHistories[book.id].find((b) => b.userId === userId);
-  if (!userHistory) {
-    console.log(`\nยืมต่อไม่สำเร็จ: ผู้ใช้ "${userId}" ไม่เคยยืมหนังสือ "${book.title}"`);
-    console.log(`   เวลา: ${formatThaiDateTime(new Date().toISOString())}\n`);
-    logBorrowHistory(book.id, 'ยืมต่อไม่สำเร็จ (ไม่มีประวัติยืม)');
-    return res.status(400).json({ error: "คุณไม่ได้ยืมหนังสือเล่มนี้" });
-  }
+    // หาการยืมที่ active
+    const [borrows] = await connection.query(
+      'SELECT * FROM borrows WHERE book_id = ? AND user_id = ? AND status = "borrowed" FOR UPDATE',
+      [id, userId]
+    );
 
-  if (userHistory.extended) {
-    console.log(`\nยืมต่อไม่สำเร็จ: ผู้ใช้ "${userId}" ยืมต่อหนังสือ "${book.title}" ไปแล้ว`);
-    console.log(`   เวลา: ${formatThaiDateTime(new Date().toISOString())}\n`);
-    logBorrowHistory(book.id, 'ยืมต่อไม่สำเร็จ (ยืมต่อแล้ว)');
-    return res.status(400).json({ error: "คุณยืมต่อหนังสือเล่มนี้ไปแล้ว" });
-  }
-
-  const now = new Date();
-  const dueDate = new Date(userHistory.dueDate);
-  const daysLeft = Math.ceil((dueDate.getTime() - now.getTime()) / (1000*60*60*24));
-
-  if (daysLeft > 3) {
-    console.log(`\nยืมต่อไม่สำเร็จ: ยืมต่อได้เมื่อเหลือเวลาไม่เกิน 3 วัน (เหลือ ${daysLeft} วัน)`);
-    console.log(`   เวลา: ${formatThaiDateTime(now.toISOString())}\n`);
-    logBorrowHistory(book.id, 'ยืมต่อไม่สำเร็จ (ยังไม่ถึงเวลา)');
-    return res.status(400).json({ error: "ยืมต่อได้เมื่อเหลือเวลาไม่เกิน 3 วัน" });
-  }
-
-  if (daysLeft < 0) {
-    console.log(`\nยืมต่อไม่สำเร็จ: หนังสือเกินกำหนดคืนแล้ว ${Math.abs(daysLeft)} วัน`);
-    console.log(`   เวลา: ${formatThaiDateTime(now.toISOString())}\n`);
-    logBorrowHistory(book.id, 'ยืมต่อไม่สำเร็จ (เกินกำหนด)');
-    return res.status(400).json({ error: "หนังสือเกินกำหนดคืนแล้ว กรุณาคืนก่อน" });
-  }
-
-  const oldDueDate = new Date(userHistory.dueDate);
-  const newDueDate = new Date(dueDate.getTime() + 7*24*60*60*1000);
-  userHistory.dueDate = newDueDate.toISOString();
-  userHistory.extended = true;
-
-  console.log(`\n╔═══════════════════════════════════════════════════════════════════╗`);
-  console.log(`║  ยืมต่อหนังสือสำเร็จ`);
-  console.log(`╠═══════════════════════════════════════════════════════════════════╣`);
-  console.log(`║  หนังสือ: "${book.title}"`);
-  console.log(`║  ผู้ยืมต่อ: ${userId}`);
-  console.log(`║  วันที่ยืมต่อ: ${formatThaiDateTime(now.toISOString())}`);
-  console.log(`║  กำหนดคืนเดิม: ${formatThaiDateTime(oldDueDate.toISOString())}`);
-  console.log(`║  กำหนดคืนใหม่: ${formatThaiDateTime(newDueDate.toISOString())}`);
-  console.log(`║  ขยายเวลาเพิ่มอีก 7 วัน`);
-  console.log(`╚═══════════════════════════════════════════════════════════════════╝`);
-
-  logBorrowHistory(book.id, 'ยืมต่อสำเร็จ');
-
-  return res.json({ 
-    success: true,
-    newDueDate: newDueDate.toISOString(),
-    book: { 
-      ...book, 
-      borrowed: borrowHistories[book.id].length, 
-      available: book.total - borrowHistories[book.id].length, 
-      total: book.total 
-    },
-    updatedStats: { // ✅ เพิ่มส่วนนี้
-      total: book.total,
-      borrowed: borrowHistories[book.id].length,
-      available: book.total - borrowHistories[book.id].length
+    if (borrows.length === 0) {
+      await connection.rollback();
+      console.log(`\nยืมต่อไม่สำเร็จ: ผู้ใช้ "${userId}" ไม่เคยยืมหนังสือ ID ${id}`);
+      return res.status(400).json({ error: "คุณไม่ได้ยืมหนังสือเล่มนี้" });
     }
-  });
+
+    const borrow = borrows[0];
+
+    if (borrow.extended) {
+      await connection.rollback();
+      console.log(`\nยืมต่อไม่สำเร็จ: ผู้ใช้ "${userId}" ยืมต่อหนังสือแล้ว`);
+      return res.status(400).json({ error: "คุณยืมต่อหนังสือเล่มนี้ไปแล้ว" });
+    }
+
+    const now = new Date();
+    const dueDate = new Date(borrow.due_date);
+    const daysLeft = Math.ceil((dueDate.getTime() - now.getTime()) / (1000*60*60*24));
+
+    if (daysLeft > 3) {
+      await connection.rollback();
+      console.log(`\nยืมต่อไม่สำเร็จ: ยืมต่อได้เมื่อเหลือเวลาไม่เกิน 3 วัน (เหลือ ${daysLeft} วัน)`);
+      return res.status(400).json({ error: "ยืมต่อได้เมื่อเหลือเวลาไม่เกิน 3 วัน" });
+    }
+
+    if (daysLeft < 0) {
+      await connection.rollback();
+      console.log(`\nยืมต่อไม่สำเร็จ: หนังสือเกินกำหนดคืนแล้ว ${Math.abs(daysLeft)} วัน`);
+      return res.status(400).json({ error: "หนังสือเกินกำหนดคืนแล้ว กรุณาคืนก่อน" });
+    }
+
+    // คำนวณวันครบกำหนดใหม่ (เพิ่ม 7 วัน)
+    const newDueDate = new Date(dueDate.getTime() + 7*24*60*60*1000);
+
+    // อัปเดตการยืม
+    await connection.query(
+      'UPDATE borrows SET due_date = ?, extended = TRUE WHERE id = ?',
+      [newDueDate, borrow.id]
+    );
+
+    // ดึงข้อมูลหนังสือ
+    const [books] = await connection.query('SELECT * FROM books WHERE id = ?', [id]);
+    const book = books[0];
+
+    await connection.commit();
+
+    console.log(`\n╔═══════════════════════════════════════════════════════════════════╗`);
+    console.log(`║  ยืมต่อหนังสือสำเร็จ`);
+    console.log(`╠═══════════════════════════════════════════════════════════════════╣`);
+    console.log(`║  หนังสือ: "${book.title}"`);
+    console.log(`║  ผู้ยืมต่อ: ${userId}`);
+    console.log(`║  วันที่ยืมต่อ: ${formatThaiDateTime(now.toISOString())}`);
+    console.log(`║  กำหนดคืนเดิม: ${formatThaiDateTime(borrow.due_date)}`);
+    console.log(`║  กำหนดคืนใหม่: ${formatThaiDateTime(newDueDate.toISOString())}`);
+    console.log(`║  ขยายเวลาเพิ่มอีก 7 วัน`);
+    console.log(`╚═══════════════════════════════════════════════════════════════════╝`);
+
+    return res.json({ 
+      success: true,
+      newDueDate: newDueDate.toISOString(),
+      book,
+      updatedStats: {
+        total: book.total,
+        borrowed: book.total - book.available,
+        available: book.available
+      }
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error extending borrow:', error);
+    res.status(500).json({ error: 'Failed to extend borrow' });
+  } finally {
+    connection.release();
+  }
+});
+
+// ---------------------- Favorites (เพิ่มใหม่) ----------------------
+
+// ✅ ดึงรายการโปรดของ user
+router.get('/favorites/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // หา user_id จาก temp_user_id หรือใช้ตรงๆ
+    const [favorites] = await pool.query(
+      `SELECT b.* 
+       FROM user_favorites uf
+       JOIN books b ON uf.book_id = b.id
+       WHERE uf.user_id = ?
+       ORDER BY uf.created_at DESC`,
+      [userId]
+    );
+
+    console.log(`\n❤️ [Favorites] User: ${userId} → ${favorites.length} รายการ`);
+
+    return res.json({ favorites });
+  } catch (error) {
+    console.error('Error fetching favorites:', error);
+    return res.status(500).json({ error: 'Failed to load favorites' });
+  }
+});
+
+// ✅ เพิ่ม/ลบหนังสือจาก Favorites
+router.post('/favorites/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { bookId, action } = req.body;
+
+    if (!bookId || !action) {
+      return res.status(400).json({ error: 'bookId และ action จำเป็นต้องมี' });
+    }
+
+    if (action === 'add') {
+      // ตรวจสอบว่ามีอยู่แล้วหรือยัง
+      const [exists] = await pool.query(
+        'SELECT id FROM user_favorites WHERE user_id = ? AND book_id = ?',
+        [userId, bookId]
+      );
+
+      if (exists.length > 0) {
+        return res.json({ message: 'มีอยู่แล้วในรายการโปรด' });
+      }
+
+      // เพิ่มใหม่
+      await pool.query(
+        'INSERT INTO user_favorites (user_id, book_id) VALUES (?, ?)',
+        [userId, bookId]
+      );
+
+      console.log(`❤️ [Add Favorite] User: ${userId} → Book: ${bookId}`);
+      return res.json({ message: 'เพิ่มในรายการโปรดสำเร็จ' });
+    }
+
+    if (action === 'remove') {
+      await pool.query(
+        'DELETE FROM user_favorites WHERE user_id = ? AND book_id = ?',
+        [userId, bookId]
+      );
+
+      console.log(`💔 [Remove Favorite] User: ${userId} → Book: ${bookId}`);
+      return res.json({ message: 'ลบออกจากรายการโปรดแล้ว' });
+    }
+
+    return res.status(400).json({ error: 'action ไม่ถูกต้อง (add/remove เท่านั้น)' });
+  } catch (error) {
+    console.error('Error updating favorites:', error);
+    return res.status(500).json({ error: 'Failed to update favorites' });
+  }
 });
 
 export default router;
